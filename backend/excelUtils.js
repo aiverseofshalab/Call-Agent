@@ -77,7 +77,7 @@ export function parseExcelFile(filePath) {
 }
 
 // ===============================
-// EXCEL GENERATOR
+// GOOGLE SHEETS COMPATIBLE EXCEL GENERATOR
 // ===============================
 export function generateUpdatedExcel(
   originalData,
@@ -93,6 +93,17 @@ export function generateUpdatedExcel(
 
     const rows = [];
 
+    // Add header row
+    const headers = [
+      'NAME',
+      'PHONE',
+      'MATH 12TH PASSED',
+      'COURSE SELECTION',
+      'CALL STATUS'
+    ];
+    rows.push(headers);
+
+    // Add data rows
     originalData.forEach((row, index) => {
       const name =
         row[0] && String(row[0]).trim()
@@ -105,43 +116,51 @@ export function generateUpdatedExcel(
 
       const r = map[phone];
 
-      // Q1
-      const q1 =
-        r?.math_12th_passed === true
-          ? 'YES'
-          : r?.math_12th_passed === false
-          ? 'NO'
-          : '-';
-
-      // Q2 NEW FORMAT
-      let q2 = '-';
-
-      if (r?.engineering_interested === true) {
-        q2 = 'INTERESTED';
-      } else if (
-        r?.engineering_interested === false
-      ) {
-        q2 =
-          (
-            r?.alternative_course || 'NOT INTERESTED'
-          ).toUpperCase();
+      // Q1: MATH 12TH PASSED
+      let mathStatus = '-';
+      if (r?.math_12th_passed === true) {
+        mathStatus = 'YES';
+      } else if (r?.math_12th_passed === false) {
+        mathStatus = 'NO';
       }
 
-      rows.push({
-        NAME: name,
-        PHONE: phone,
-        'MATH 12TH PASSED': q1,
-        'ENGINEERING DECISION': q2,
-        'CALL STATUS':
-          (
-            r?.call_status || 'PENDING'
-          ).toUpperCase()
-      });
+      // Q2/Q3: COURSE SELECTION
+      let courseSelection = '-';
+      
+      if (r?.engineering_interested === true) {
+        courseSelection = 'INTERESTED';
+      } else if (r?.engineering_interested === false) {
+        // Show the actual course they selected
+        const alternative = r?.alternative_course;
+        if (alternative === 'Science') {
+          courseSelection = 'SCIENCE';
+        } else if (alternative === 'Commerce') {
+          courseSelection = 'COMMERCE';
+        } else if (alternative === 'Arts') {
+          courseSelection = 'ARTS';
+        } else if (alternative === 'Other') {
+          courseSelection = 'OTHER';
+        } else {
+          courseSelection = 'NOT INTERESTED';
+        }
+      }
+
+      // Call Status
+      let callStatus = (r?.call_status || 'PENDING').toUpperCase();
+
+      rows.push([
+        name,
+        phone,
+        mathStatus,
+        courseSelection,
+        callStatus
+      ]);
     });
 
     const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.json_to_sheet(rows);
+    const ws = XLSX.utils.aoa_to_sheet(rows);
 
+    // Set column widths
     ws['!cols'] = [
       { wch: 28 },
       { wch: 18 },
@@ -150,166 +169,118 @@ export function generateUpdatedExcel(
       { wch: 18 }
     ];
 
-    const range = XLSX.utils.decode_range(
-      ws['!ref']
-    );
+    const range = XLSX.utils.decode_range(ws['!ref']);
 
-    // HEADER
-    for (let C = range.s.c; C <= range.e.c; ++C) {
-      const cell = XLSX.utils.encode_cell({
-        r: 0,
-        c: C
-      });
-
-      if (!ws[cell]) continue;
-
-      ws[cell].s = {
-        font: {
-          bold: true,
-          color: { rgb: 'FFFFFF' },
-          sz: 12
-        },
-        fill: {
-          fgColor: { rgb: '1F4E78' }
-        },
-        alignment: {
-          horizontal: 'center',
-          vertical: 'center'
-        }
+    // =============================================
+    // HEADER STYLING (Row 1)
+    // =============================================
+    for (let C = range.s.c; C <= range.e.c; C++) {
+      const cellAddress = XLSX.utils.encode_cell({ r: 0, c: C });
+      if (!ws[cellAddress]) continue;
+      
+      ws[cellAddress].s = {
+        font: { bold: true, sz: 12, color: { rgb: 'FFFFFF' } },
+        fill: { fgColor: { rgb: '1F4E78' } },
+        alignment: { horizontal: 'center', vertical: 'center' }
       };
     }
 
-    // BODY
-    for (let R = 1; R <= range.e.r; ++R) {
-      for (
-        let C = range.s.c;
-        C <= range.e.c;
-        ++C
-      ) {
-        const cell =
-          XLSX.utils.encode_cell({
-            r: R,
-            c: C
-          });
-
-        if (!ws[cell]) continue;
-
-        ws[cell].s = {
-          alignment: {
-            horizontal: 'center',
-            vertical: 'center'
-          }
-        };
-      }
-
-      // Q1 column C
-      const c1 = `C${R + 1}`;
-
-      if (ws[c1]?.v === 'YES') {
-        ws[c1].s.fill = {
-          fgColor: { rgb: 'C6EFCE' }
-        };
-        ws[c1].s.font = {
-          bold: true,
-          color: { rgb: '006100' }
-        };
-      }
-
-      if (ws[c1]?.v === 'NO') {
-        ws[c1].s.fill = {
-          fgColor: { rgb: 'FFC7CE' }
-        };
-        ws[c1].s.font = {
-          bold: true,
-          color: { rgb: '9C0006' }
-        };
-      }
-
-      // Q2 column D
-      const c2 = `D${R + 1}`;
-
-      if (
-        ws[c2]?.v === 'INTERESTED'
-      ) {
-        ws[c2].s.fill = {
-          fgColor: { rgb: 'C6EFCE' }
-        };
-        ws[c2].s.font = {
-          bold: true,
-          color: { rgb: '006100' }
-        };
-      }
-
-      if (
-        ws[c2]?.v !== 'INTERESTED' &&
-        ws[c2]?.v !== '-'
-      ) {
-        ws[c2].s.fill = {
-          fgColor: { rgb: 'FFC7CE' }
-        };
-        ws[c2].s.font = {
-          bold: true,
-          color: { rgb: '9C0006' }
-        };
-      }
-
-      // STATUS column E
-      const st = `E${R + 1}`;
-
-      if (ws[st]?.v === 'COMPLETED') {
-        ws[st].s.fill = {
-          fgColor: { rgb: 'C6EFCE' }
-        };
-        ws[st].s.font = {
-          bold: true,
-          color: { rgb: '006100' }
-        };
-      }
-
-      if (ws[st]?.v === 'CANCELED') {
-        ws[st].s.fill = {
-          fgColor: { rgb: 'FFC7CE' }
-        };
-        ws[st].s.font = {
-          bold: true,
-          color: { rgb: '9C0006' }
-        };
-      }
-
-      if (
-        ws[st]?.v === 'FAILED' ||
-        ws[st]?.v === 'BUSY' ||
-        ws[st]?.v === 'NO-ANSWER'
-      ) {
-        ws[st].s.fill = {
-          fgColor: { rgb: 'BDD7EE' }
-        };
-        ws[st].s.font = {
-          bold: true,
-          color: { rgb: '1F4E78' }
-        };
-      }
-
-      if (ws[st]?.v === 'PENDING') {
-        ws[st].s.fill = {
-          fgColor: { rgb: 'FFF2CC' }
-        };
-        ws[st].s.font = {
-          bold: true,
-          color: { rgb: '7F6000' }
+    // =============================================
+    // BORDER & ALIGNMENT FOR ALL DATA CELLS
+    // =============================================
+    for (let R = 1; R <= range.e.r; R++) {
+      for (let C = range.s.c; C <= range.e.c; C++) {
+        const cellAddress = XLSX.utils.encode_cell({ r: R, c: C });
+        if (!ws[cellAddress]) continue;
+        
+        if (!ws[cellAddress].s) ws[cellAddress].s = {};
+        ws[cellAddress].s.alignment = { horizontal: 'center', vertical: 'center' };
+        ws[cellAddress].s.border = {
+          top: { style: 'thin', color: { rgb: 'CCCCCC' } },
+          bottom: { style: 'thin', color: { rgb: 'CCCCCC' } },
+          left: { style: 'thin', color: { rgb: 'CCCCCC' } },
+          right: { style: 'thin', color: { rgb: 'CCCCCC' } }
         };
       }
     }
 
-    XLSX.utils.book_append_sheet(
-      wb,
-      ws,
-      'SURVEY RESULTS'
-    );
+    // =============================================
+    // COLOR MATH STATUS COLUMN (C)
+    // YES = Green, NO = Red
+    // =============================================
+    for (let R = 2; R <= rows.length; R++) {
+      const cellAddress = `C${R}`;
+      if (ws[cellAddress]) {
+        ws[cellAddress].s = ws[cellAddress].s || {};
+        
+        if (ws[cellAddress].v === 'YES') {
+          ws[cellAddress].s.fill = { fgColor: { rgb: 'C6EFCE' } };
+          ws[cellAddress].s.font = { bold: true, color: { rgb: '006100' } };
+        } else if (ws[cellAddress].v === 'NO') {
+          ws[cellAddress].s.fill = { fgColor: { rgb: 'FFC7CE' } };
+          ws[cellAddress].s.font = { bold: true, color: { rgb: '9C0006' } };
+        }
+      }
+    }
 
-    XLSX.writeFile(wb, outputPath, {
-      cellStyles: true
-    });
+    // =============================================
+    // COLOR COURSE SELECTION COLUMN (D)
+    // INTERESTED = Green
+    // SCIENCE, COMMERCE, ARTS, OTHER = Red
+    // =============================================
+    for (let R = 2; R <= rows.length; R++) {
+      const cellAddress = `D${R}`;
+      if (ws[cellAddress]) {
+        ws[cellAddress].s = ws[cellAddress].s || {};
+        
+        if (ws[cellAddress].v === 'INTERESTED') {
+          ws[cellAddress].s.fill = { fgColor: { rgb: 'C6EFCE' } };
+          ws[cellAddress].s.font = { bold: true, color: { rgb: '006100' } };
+        } else if (
+          ws[cellAddress].v === 'SCIENCE' ||
+          ws[cellAddress].v === 'COMMERCE' ||
+          ws[cellAddress].v === 'ARTS' ||
+          ws[cellAddress].v === 'OTHER'
+        ) {
+          ws[cellAddress].s.fill = { fgColor: { rgb: 'FFC7CE' } };
+          ws[cellAddress].s.font = { bold: true, color: { rgb: '9C0006' } };
+        }
+      }
+    }
+
+    // =============================================
+    // COLOR CALL STATUS COLUMN (E)
+    // COMPLETED = Green
+    // CANCELED = Dark Red
+    // FAILED/BUSY/NO-ANSWER = Blue
+    // PENDING = Yellow
+    // =============================================
+    for (let R = 2; R <= rows.length; R++) {
+      const cellAddress = `E${R}`;
+      if (ws[cellAddress]) {
+        ws[cellAddress].s = ws[cellAddress].s || {};
+        ws[cellAddress].s.font = { bold: true };
+        
+        const status = ws[cellAddress].v;
+        
+        if (status === 'COMPLETED') {
+          ws[cellAddress].s.fill = { fgColor: { rgb: 'C6EFCE' } };
+          ws[cellAddress].s.font.color = { rgb: '006100' };
+        } else if (status === 'CANCELED') {
+          ws[cellAddress].s.fill = { fgColor: { rgb: 'FFC7CE' } };
+          ws[cellAddress].s.font.color = { rgb: '9C0006' };
+        } else if (status === 'FAILED' || status === 'BUSY' || status === 'NO-ANSWER') {
+          ws[cellAddress].s.fill = { fgColor: { rgb: 'BDD7EE' } };
+          ws[cellAddress].s.font.color = { rgb: '1F4E78' };
+        } else if (status === 'PENDING') {
+          ws[cellAddress].s.fill = { fgColor: { rgb: 'FFF2CC' } };
+          ws[cellAddress].s.font.color = { rgb: '7F6000' };
+        }
+      }
+    }
+
+    XLSX.utils.book_append_sheet(wb, ws, 'SURVEY RESULTS');
+    XLSX.writeFile(wb, outputPath, { cellStyles: true, bookType: 'xlsx' });
 
     return outputPath;
   } catch (error) {
