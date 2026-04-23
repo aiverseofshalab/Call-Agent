@@ -11,9 +11,8 @@ const fromNumber = process.env.TWILIO_PHONE_NUMBER;
 
 // FINAL FIXED BACKEND URL
 const BACKEND_URL =
-  process.env.BACKEND_URL ||
-  process.env.BASE_URL ||
-  'https://call-agent-envo.onrender.com';
+ process.env.NEXT_PUBLIC_BACKEND_URL ||
+'https://call-agent-envo.onrender.com';
 
 if (!accountSid || !authToken || !fromNumber) {
   throw new Error('Missing Twilio environment variables');

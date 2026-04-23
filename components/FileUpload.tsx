@@ -55,7 +55,9 @@ export function FileUpload({ onUploadSuccess, isLoading = false }: FileUploadPro
       const formData = new FormData();
       formData.append('file', file);
 
-      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:5000';
+      const backendUrl = 
+      process.env.NEXT_PUBLIC_BACKEND_URL ||
+      'https://call-agent-envo.onrender.com';
       const response = await fetch(`${backendUrl}/api/surveys/upload`, {
         method: 'POST',
         body: formData

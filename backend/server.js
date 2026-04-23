@@ -6,10 +6,8 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-// Load env
 dotenv.config();
 
-// Custom modules
 import {
   createSurvey,
   updateSurveyStatus,
@@ -37,215 +35,86 @@ import {
   isValidPhoneNumber
 } from './excelUtils.js';
 
-// Init
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// __dirname for ES modules
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Directories
 const uploadsDir = path.join(__dirname, 'uploads');
 const resultsDir = path.join(__dirname, 'results');
 
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 if (!fs.existsSync(resultsDir)) fs.mkdirSync(resultsDir, { recursive: true });
 
-// ==================== MIDDLEWARE ====================
-
-// FIXED CORS
-app.use(cors({
-  origin: function (origin, callback) {
-    if (!origin) return callback(null, true);
-
-    const allowed = [
-      'http://localhost:3000',
-      'https://call-agent-nu.vercel.app'
-    ];
-
-    const isVercelPreview = origin.endsWith('.vercel.app');
-
-    if (allowed.includes(origin) || isVercelPreview) {
-      return callback(null, true);
-    }
-
-    return callback(new Error('CORS not allowed'));
-  },
-  credentials: true
-}));
-
+app.use(cors({ origin: true, credentials: true }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Multer setup
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, uploadsDir),
-  filename: (req, file, cb) => cb(null, `${Date.now()}-${file.originalname}`)
+  destination: (_, __, cb) => cb(null, uploadsDir),
+  filename: (_, file, cb) => cb(null, `${Date.now()}-${file.originalname}`)
 });
 
-const upload = multer({
-  storage,
-  limits: {
-    fileSize: 10 * 1024 * 1024 // 10MB
-  }
+const upload = multer({ storage });
+
+app.get('/', (_, res) => {
+  res.json({ success: true, message: 'Backend Running' });
 });
-
-// ==================== HEALTH ====================
-
-app.get('/', (req, res) => {
-  res.json({
-    success: true,
-    message: 'IVR Survey Backend Running'
-  });
-});
-
-app.get('/health', (req, res) => {
-  res.json({
-    status: 'ok',
-    time: new Date().toISOString()
-  });
-});
-
-// ==================== UPLOAD ====================
 
 app.post('/api/surveys/upload', upload.single('file'), async (req, res) => {
   try {
-    console.log('Upload request received');
-
-    if (!req.file) {
-      return res.status(400).json({
-        success: false,
-        error: 'No file uploaded'
-      });
-    }
-
-    console.log('Uploaded file:', req.file.originalname);
-
     const parsed = parseExcelFile(req.file.path);
 
-    const contacts = parsed.contacts || [];
-    const headers = parsed.headers || [];
-    const originalData = parsed.originalData || [];
-
-    if (contacts.length === 0) {
-      return res.status(400).json({
-        success: false,
-        error: 'No valid contacts found'
-      });
-    }
-
-    const validContacts = contacts.filter((c) =>
+    const contacts = parsed.contacts.filter(c =>
       isValidPhoneNumber(c.phone)
     );
 
-    if (validContacts.length === 0) {
-      return res.status(400).json({
-        success: false,
-        error: 'No valid phone numbers found'
-      });
-    }
+    const survey = await createSurvey(req.file.originalname, parsed);
 
-    // Create survey
-    const survey = await createSurvey(req.file.originalname, {
-      contacts: validContacts,
-      headers,
-      originalData
-    });
-
-    // Create responses
-    for (const contact of validContacts) {
+    for (const contact of contacts) {
       await createResponse(survey.id, contact);
     }
 
-    return res.json({
+    res.json({
       success: true,
       survey: {
         id: survey.id,
         fileName: survey.file_name,
-        totalContacts: validContacts.length,
-        status: survey.status
+        totalContacts: contacts.length,
+        status: 'pending'
       }
     });
-
   } catch (error) {
-    console.error('UPLOAD ERROR:', error);
-
-    return res.status(500).json({
-      success: false,
-      error: error.message || 'Upload failed'
-    });
+    res.status(500).json({ success: false, error: error.message });
   }
 });
-
-// ==================== GET SURVEY ====================
-
-app.get('/api/surveys/:surveyId', async (req, res) => {
-  try {
-    const survey = await getSurvey(req.params.surveyId);
-    const responses = await getSurveyResponses(req.params.surveyId);
-
-    return res.json({
-      success: true,
-      survey,
-      responses
-    });
-
-  } catch (error) {
-    console.error(error);
-
-    return res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-// ==================== START CALLS ====================
 
 app.post('/api/surveys/:surveyId/start-calls', async (req, res) => {
   try {
     const surveyId = req.params.surveyId;
-
-    const survey = await getSurvey(surveyId);
     const responses = await getSurveyResponses(surveyId);
 
-    await updateSurveyStatus(surveyId, {
-      status: 'in_progress'
-    });
+    await updateSurveyStatus(surveyId, { status: 'in_progress' });
 
-    for (const response of responses) {
+    for (const row of responses) {
       try {
-        const phone = formatPhoneNumber(response.phone_number);
-
         await initiateCall(
           surveyId,
-          response.id,
-          response.contact_name,
-          phone
+          row.id,
+          row.contact_name,
+          formatPhoneNumber(row.phone_number)
         );
-
-      } catch (err) {
-        console.error('Call failed:', err);
+      } catch {
+        await updateResponse(row.id, { status: 'failed' });
       }
     }
 
-    return res.json({
-      success: true,
-      message: 'Calling started'
-    });
-
+    res.json({ success: true });
   } catch (error) {
-    console.error(error);
-
-    return res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    res.status(500).json({ success: false, error: error.message });
   }
 });
-
-// ==================== PROGRESS ====================
 
 app.get('/api/surveys/:surveyId/progress', async (req, res) => {
   try {
@@ -255,8 +124,15 @@ app.get('/api/surveys/:surveyId/progress', async (req, res) => {
     const responses = await getSurveyResponses(surveyId);
 
     const total = responses.length;
-    const completed = responses.filter(r => r.status === 'completed').length;
-    const failed = responses.filter(r => r.status === 'failed').length;
+
+    const completed = responses.filter(
+      r => r.status === 'completed'
+    ).length;
+
+    const failed = responses.filter(r =>
+      ['failed', 'busy', 'no-answer', 'canceled'].includes(r.status)
+    ).length;
+
     const pending = total - completed - failed;
 
     let status = survey.status;
@@ -266,7 +142,8 @@ app.get('/api/surveys/:surveyId/progress', async (req, res) => {
       await updateSurveyStatus(surveyId, { status: 'completed' });
     }
 
-    return res.json({
+    res.json({
+      success: true,
       surveyId,
       status,
       totalContacts: total,
@@ -279,17 +156,10 @@ app.get('/api/surveys/:surveyId/progress', async (req, res) => {
         total
       }
     });
-
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    res.status(500).json({ success: false, error: error.message });
   }
 });
-
-
-// ==================== TWILIO STATUS ====================
 
 app.post('/api/ivr/status', async (req, res) => {
   try {
@@ -297,9 +167,7 @@ app.post('/api/ivr/status', async (req, res) => {
 
     const state = getCallState(CallSid);
 
-    if (!state) {
-      return res.sendStatus(200);
-    }
+    if (!state) return res.sendStatus(200);
 
     if (CallStatus === 'completed') {
       await updateResponse(state.responseId, {
@@ -309,156 +177,84 @@ app.post('/api/ivr/status', async (req, res) => {
     }
 
     if (
-      CallStatus === 'failed' ||
-      CallStatus === 'busy' ||
-      CallStatus === 'no-answer' ||
-      CallStatus === 'canceled'
+      ['failed', 'busy', 'no-answer', 'canceled'].includes(CallStatus)
     ) {
       await updateResponse(state.responseId, {
-        status: 'failed'
+        status: CallStatus
       });
     }
 
     if (
-      CallStatus === 'completed' ||
-      CallStatus === 'failed' ||
-      CallStatus === 'busy' ||
-      CallStatus === 'no-answer' ||
-      CallStatus === 'canceled'
+      ['completed', 'failed', 'busy', 'no-answer', 'canceled'].includes(CallStatus)
     ) {
       cleanupCallState(CallSid);
     }
 
     res.sendStatus(200);
-
-  } catch (error) {
-    console.error(error);
+  } catch {
     res.sendStatus(200);
   }
 });
 
-// ==================== TWILIO IVR ====================
-
-app.post('/api/ivr/greeting', async (req, res) => {
-  try {
-    const { name } = req.query;
-    const twiml = generateGreetingTwiml(name || 'Friend');
-
-    res.type('text/xml');
-    res.send(twiml);
-
-  } catch (error) {
-    res.type('text/xml');
-    res.send('<Response><Say>Error</Say></Response>');
-  }
+app.post('/api/ivr/greeting', (req, res) => {
+  res.type('text/xml');
+  res.send(generateGreetingTwiml(req.query.name || 'Friend'));
 });
 
-app.post('/api/ivr/question1', async (req, res) => {
-  try {
-    const { Digits, CallSid } = req.body;
+app.post('/api/ivr/question1', (req, res) => {
+  const { Digits, CallSid } = req.body;
 
-    const state = getCallState(CallSid);
-
-    if (state) {
-      state.answers.math12thPassed = Digits === '1';
-      updateCallState(CallSid, state);
-    }
-
-    const twiml = generateQuestion1ResponseTwiml(Digits);
-
-    res.type('text/xml');
-    res.send(twiml);
-
-  } catch (error) {
-    res.type('text/xml');
-    res.send('<Response><Say>Error</Say></Response>');
+  const state = getCallState(CallSid);
+  if (state) {
+    state.answers.math12thPassed = Digits === '1';
+    updateCallState(CallSid, state);
   }
+
+  res.type('text/xml');
+  res.send(generateQuestion1ResponseTwiml(Digits));
 });
 
-app.post('/api/ivr/question2', async (req, res) => {
-  try {
-    const { Digits, CallSid } = req.body;
+app.post('/api/ivr/question2', (req, res) => {
+  const { Digits, CallSid } = req.body;
 
-    const state = getCallState(CallSid);
-
-    if (state) {
-      state.answers.engineeringInterested = Digits === '1';
-      updateCallState(CallSid, state);
-    }
-
-    const twiml = generateQuestion2ResponseTwiml(Digits);
-
-    res.type('text/xml');
-    res.send(twiml);
-
-  } catch (error) {
-    res.type('text/xml');
-    res.send('<Response><Say>Error</Say></Response>');
+  const state = getCallState(CallSid);
+  if (state) {
+    state.answers.engineeringInterested = Digits === '1';
+    updateCallState(CallSid, state);
   }
+
+  res.type('text/xml');
+  res.send(generateQuestion2ResponseTwiml(Digits));
 });
 
-app.post('/api/ivr/question3', async (req, res) => {
-  try {
-    const { Digits, CallSid } = req.body;
+app.post('/api/ivr/question3', (req, res) => {
+  const { Digits, CallSid } = req.body;
 
-    const twiml = generateQuestion3ResponseTwiml(Digits);
+  cleanupCallState(CallSid);
 
-    res.type('text/xml');
-    res.send(twiml);
-
-    cleanupCallState(CallSid);
-
-  } catch (error) {
-    res.type('text/xml');
-    res.send('<Response><Say>Error</Say></Response>');
-  }
+  res.type('text/xml');
+  res.send(generateQuestion3ResponseTwiml(Digits));
 });
-
-// ==================== DOWNLOAD ====================
 
 app.get('/api/surveys/:surveyId/download', async (req, res) => {
   try {
-    const surveyId = req.params.surveyId;
+    const survey = await getSurvey(req.params.surveyId);
+    const responses = await getSurveyResponses(req.params.surveyId);
 
-    const survey = await getSurvey(surveyId);
-    const responses = await getSurveyResponses(surveyId);
-
-    const outputPath = path.join(
-      resultsDir,
-      `results-${Date.now()}.xlsx`
-    );
+    const output = path.join(resultsDir, `results-${Date.now()}.xlsx`);
 
     generateUpdatedExcel(
       survey.excel_data.originalData || [],
       responses,
-      outputPath
+      output
     );
 
-    return res.download(outputPath);
-
+    res.download(output);
   } catch (error) {
-    return res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// ==================== ERROR HANDLER ====================
-
-app.use((err, req, res, next) => {
-  console.error('UNHANDLED:', err);
-
-  res.status(500).json({
-    success: false,
-    error: err.message || 'Server error'
-  });
-});
-
-// ==================== START ====================
-
 app.listen(PORT, () => {
-  console.log(`IVR Survey Backend Server running on port ${PORT}`);
-  console.log(`Environment: ${process.env.NODE_ENV}`);
-  console.log(`Frontend URL: ${process.env.FRONTEND_URL}`);
+  console.log(`Server running on ${PORT}`);
 });
