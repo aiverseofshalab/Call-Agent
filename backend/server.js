@@ -53,22 +53,15 @@ app.use(express.urlencoded({ extended: true }));
 
 const storage = multer.diskStorage({
   destination: (_, __, cb) => cb(null, uploadsDir),
-  filename: (_, file, cb) =>
-    cb(null, `${Date.now()}-${file.originalname}`)
+  filename: (_, file, cb) => cb(null, `${Date.now()}-${file.originalname}`)
 });
 
 const upload = multer({ storage });
 
-// ===============================
-// ROOT
-// ===============================
 app.get('/', (_, res) => {
   res.json({ success: true, message: 'Backend Running' });
 });
 
-// ===============================
-// UPLOAD
-// ===============================
 app.post('/api/surveys/upload', upload.single('file'), async (req, res) => {
   try {
     const parsed = parseExcelFile(req.file.path);
@@ -77,10 +70,7 @@ app.post('/api/surveys/upload', upload.single('file'), async (req, res) => {
       isValidPhoneNumber(c.phone)
     );
 
-    const survey = await createSurvey(
-      req.file.originalname,
-      parsed
-    );
+    const survey = await createSurvey(req.file.originalname, parsed);
 
     for (const row of contacts) {
       await createResponse(survey.id, row);
@@ -103,20 +93,34 @@ app.post('/api/surveys/upload', upload.single('file'), async (req, res) => {
   }
 });
 
-// ===============================
-// START CALLS
-// ===============================
 app.post('/api/surveys/:surveyId/start-calls', async (req, res) => {
   try {
     const surveyId = req.params.surveyId;
 
-    const rows = await getSurveyResponses(surveyId);
+    const survey = await getSurvey(surveyId);
+
+    if (
+      survey.status === 'in_progress' ||
+      survey.status === 'completed'
+    ) {
+      return res.json({
+        success: true,
+        message: 'Already started'
+      });
+    }
 
     await updateSurveyStatus(surveyId, {
       status: 'in_progress'
     });
 
+    const rows = await getSurveyResponses(surveyId);
+
     for (const row of rows) {
+      if (
+        row.status === 'completed' ||
+        row.status === 'failed'
+      ) continue;
+
       try {
         await initiateCall(
           surveyId,
@@ -140,9 +144,6 @@ app.post('/api/surveys/:surveyId/start-calls', async (req, res) => {
   }
 });
 
-// ===============================
-// PROGRESS
-// ===============================
 app.get('/api/surveys/:surveyId/progress', async (req, res) => {
   try {
     const surveyId = req.params.surveyId;
@@ -152,25 +153,30 @@ app.get('/api/surveys/:surveyId/progress', async (req, res) => {
 
     const total = rows.length;
 
-    const completed = rows.filter(
-      r => r.status === 'completed'
-    ).length;
+    let completed = 0;
+    let failed = 0;
 
-    const failed = rows.filter(r =>
-      ['failed', 'busy', 'no-answer', 'canceled'].includes(r.status)
-    ).length;
+    for (const row of rows) {
+      if (row.status === 'completed') completed++;
+
+      if (
+        ['failed', 'busy', 'no-answer', 'canceled'].includes(row.status)
+      ) failed++;
+    }
 
     const pending = total - completed - failed;
 
     let status = survey.status;
 
-    if (pending === 0 && total > 0) {
+    if (pending <= 0 && total > 0) {
       status = 'completed';
 
       await updateSurveyStatus(surveyId, {
         status: 'completed'
       });
     }
+
+    res.setHeader('Cache-Control', 'no-store');
 
     res.json({
       success: true,
@@ -197,9 +203,6 @@ app.get('/api/surveys/:surveyId/progress', async (req, res) => {
   }
 });
 
-// ===============================
-// TWILIO CALLBACK
-// ===============================
 app.post('/api/ivr/status', async (req, res) => {
   try {
     const { CallSid, CallStatus } = req.body;
@@ -232,22 +235,14 @@ app.post('/api/ivr/status', async (req, res) => {
     }
 
     res.sendStatus(200);
-  } catch (error) {
-    console.log(error);
+  } catch {
     res.sendStatus(200);
   }
 });
 
-// ===============================
-// IVR ROUTES
-// ===============================
 app.post('/api/ivr/greeting', (req, res) => {
   res.type('text/xml');
-  res.send(
-    generateGreetingTwiml(
-      req.query.name || 'Friend'
-    )
-  );
+  res.send(generateGreetingTwiml(req.query.name || 'Friend'));
 });
 
 app.post('/api/ivr/question1', (req, res) => {
@@ -287,9 +282,6 @@ app.post('/api/ivr/question3', (req, res) => {
   res.send(generateQuestion3ResponseTwiml());
 });
 
-// ===============================
-// DOWNLOAD EXCEL
-// ===============================
 app.get('/api/surveys/:surveyId/download', async (req, res) => {
   try {
     const survey = await getSurvey(req.params.surveyId);
