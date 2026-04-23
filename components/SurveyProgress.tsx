@@ -81,9 +81,9 @@ export function SurveyProgress({
   const timer =
     useRef<NodeJS.Timeout | null>(null);
 
-  // ===================================
-  // FETCH LIVE PROGRESS
-  // ===================================
+  // ==========================================
+  // FETCH LIVE DASHBOARD DATA
+  // ==========================================
   const fetchProgress = async (
     manual = false
   ) => {
@@ -98,34 +98,40 @@ export function SurveyProgress({
           cache: 'no-store',
           headers: {
             'Cache-Control':
-              'no-cache',
+              'no-cache, no-store, must-revalidate',
             Pragma:
-              'no-cache'
+              'no-cache',
+            Expires: '0'
           }
         }
       );
 
       if (!res.ok)
         throw new Error(
-          'Failed'
+          'Failed to fetch progress'
         );
 
       const json =
         await res.json();
 
+      // force rerender
       setData({
         ...json
       });
 
+      // stop auto refresh when done
       if (
         json.status ===
           'completed' ||
         json.pending === 0
       ) {
-        if (timer.current)
+        if (timer.current) {
           clearInterval(
             timer.current
           );
+          timer.current =
+            null;
+        }
       }
     } catch (error) {
       console.log(error);
@@ -135,9 +141,9 @@ export function SurveyProgress({
     }
   };
 
-  // ===================================
-  // AUTO REFRESH
-  // ===================================
+  // ==========================================
+  // AUTO REFRESH EVERY 2 SEC
+  // ==========================================
   useEffect(() => {
     fetchProgress(true);
 
@@ -147,16 +153,17 @@ export function SurveyProgress({
       }, 2000);
 
     return () => {
-      if (timer.current)
+      if (timer.current) {
         clearInterval(
           timer.current
         );
+      }
     };
   }, [surveyId]);
 
-  // ===================================
+  // ==========================================
   // START CALLING
-  // ===================================
+  // ==========================================
   const startCalls =
     async () => {
       try {
@@ -174,12 +181,14 @@ export function SurveyProgress({
           true
         );
 
-        timer.current =
-          setInterval(
-            () =>
-              fetchProgress(),
-            2000
-          );
+        if (!timer.current) {
+          timer.current =
+            setInterval(
+              () =>
+                fetchProgress(),
+              2000
+            );
+        }
       } catch (error) {
         console.log(error);
       } finally {
@@ -187,9 +196,9 @@ export function SurveyProgress({
       }
     };
 
-  // ===================================
-  // DOWNLOAD
-  // ===================================
+  // ==========================================
+  // DOWNLOAD FINAL REPORT
+  // ==========================================
   const downloadSheet =
     () => {
       window.open(
@@ -198,9 +207,9 @@ export function SurveyProgress({
       );
     };
 
-  // ===================================
+  // ==========================================
   // SHEET VIEWER
-  // ===================================
+  // ==========================================
   const openViewer =
     async () => {
       try {
@@ -261,9 +270,9 @@ export function SurveyProgress({
       }
     };
 
-  // ===================================
-  // LOADING
-  // ===================================
+  // ==========================================
+  // LOADING UI
+  // ==========================================
   if (loading) {
     return (
       <Card className="bg-[#0f1117] border-white/10 text-white rounded-2xl">
@@ -379,8 +388,7 @@ export function SurveyProgress({
             'in_progress' && (
             <Alert className="border-white/10 bg-white/5 text-zinc-300">
               <AlertDescription>
-                Live campaign
-                running...
+                Live campaign running...
               </AlertDescription>
             </Alert>
           )}
@@ -389,13 +397,12 @@ export function SurveyProgress({
             'completed' && (
             <Alert className="border-green-500/20 bg-green-500/10 text-green-300">
               <AlertDescription>
-                Campaign
-                completed.
+                Campaign completed.
               </AlertDescription>
             </Alert>
           )}
 
-          {/* BUTTONS */}
+          {/* ACTIONS */}
           <div className="grid md:grid-cols-4 gap-3">
 
             {status ===
@@ -458,7 +465,7 @@ export function SurveyProgress({
         </CardContent>
       </Card>
 
-      {/* VIEWER */}
+      {/* SHEET VIEWER MODAL */}
       {viewerOpen && (
         <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-5">
 
