@@ -245,41 +245,25 @@ app.post('/api/ivr/greeting', (req, res) => {
   res.send(generateGreetingTwiml(req.query.name || 'Friend'));
 });
 
-app.post('/api/ivr/question1', (req, res) => {
+app.post('/api/ivr/question1', async (req, res) => {
   const { Digits, CallSid } = req.body;
-
-  const state = getCallState(CallSid);
-
-  if (state) {
-    state.answers.math12thPassed = Digits === '1';
-    updateCallState(CallSid, state);
-  }
-
+  const xml = await generateQuestion1ResponseTwiml(CallSid, Digits);
   res.type('text/xml');
-  res.send(generateQuestion1ResponseTwiml(Digits));
+  res.send(xml);
 });
 
-app.post('/api/ivr/question2', (req, res) => {
+app.post('/api/ivr/question2', async (req, res) => {
   const { Digits, CallSid } = req.body;
-
-  const state = getCallState(CallSid);
-
-  if (state) {
-    state.answers.engineeringInterested = Digits === '1';
-    updateCallState(CallSid, state);
-  }
-
+  const xml = await generateQuestion2ResponseTwiml(CallSid, Digits);
   res.type('text/xml');
-  res.send(generateQuestion2ResponseTwiml(Digits));
+  res.send(xml);
 });
 
-app.post('/api/ivr/question3', (req, res) => {
-  const { CallSid } = req.body;
-
-  cleanupCallState(CallSid);
-
+app.post('/api/ivr/question3', async (req, res) => {
+  const { Digits, CallSid } = req.body;
+  const xml = await generateQuestion3ResponseTwiml(CallSid, Digits);
   res.type('text/xml');
-  res.send(generateQuestion3ResponseTwiml());
+  res.send(xml);
 });
 
 app.get('/api/surveys/:surveyId/download', async (req, res) => {
