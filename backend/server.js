@@ -245,6 +245,98 @@ app.post('/api/surveys/:surveyId/start-calls', async (req, res) => {
   }
 });
 
+// ==================== PROGRESS ====================
+
+app.get('/api/surveys/:surveyId/progress', async (req, res) => {
+  try {
+    const surveyId = req.params.surveyId;
+
+    const survey = await getSurvey(surveyId);
+    const responses = await getSurveyResponses(surveyId);
+
+    const total = responses.length;
+    const completed = responses.filter(r => r.status === 'completed').length;
+    const failed = responses.filter(r => r.status === 'failed').length;
+    const pending = total - completed - failed;
+
+    let status = survey.status;
+
+    if (pending === 0 && total > 0) {
+      status = 'completed';
+      await updateSurveyStatus(surveyId, { status: 'completed' });
+    }
+
+    return res.json({
+      surveyId,
+      status,
+      totalContacts: total,
+      completed,
+      failed,
+      pending,
+      progress: {
+        percentage: total === 0 ? 0 : Math.round(((completed + failed) / total) * 100),
+        completed: completed + failed,
+        total
+      }
+    });
+
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+
+// ==================== TWILIO STATUS ====================
+
+app.post('/api/ivr/status', async (req, res) => {
+  try {
+    const { CallSid, CallStatus } = req.body;
+
+    const state = getCallState(CallSid);
+
+    if (!state) {
+      return res.sendStatus(200);
+    }
+
+    if (CallStatus === 'completed') {
+      await updateResponse(state.responseId, {
+        status: 'completed',
+        answers: state.answers
+      });
+    }
+
+    if (
+      CallStatus === 'failed' ||
+      CallStatus === 'busy' ||
+      CallStatus === 'no-answer' ||
+      CallStatus === 'canceled'
+    ) {
+      await updateResponse(state.responseId, {
+        status: 'failed'
+      });
+    }
+
+    if (
+      CallStatus === 'completed' ||
+      CallStatus === 'failed' ||
+      CallStatus === 'busy' ||
+      CallStatus === 'no-answer' ||
+      CallStatus === 'canceled'
+    ) {
+      cleanupCallState(CallSid);
+    }
+
+    res.sendStatus(200);
+
+  } catch (error) {
+    console.error(error);
+    res.sendStatus(200);
+  }
+});
+
 // ==================== TWILIO IVR ====================
 
 app.post('/api/ivr/greeting', async (req, res) => {
