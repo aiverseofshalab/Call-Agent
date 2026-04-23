@@ -4,42 +4,55 @@ const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_KEY;
 
 if (!supabaseUrl || !supabaseKey) {
-  throw new Error('Missing SUPABASE_URL or SUPABASE_KEY environment variables');
+  throw new Error('Missing SUPABASE_URL or SUPABASE_KEY');
 }
 
 export const supabase = createClient(supabaseUrl, supabaseKey);
 
-// Function to create a new survey
+//
+// CREATE SURVEY
+//
 export async function createSurvey(fileName, excelData) {
+  const total =
+    excelData?.contacts?.length ||
+    excelData?.length ||
+    0;
+
   const { data, error } = await supabase
     .from('surveys')
     .insert([
       {
         file_name: fileName,
-        total_contacts: excelData.length,
+        total_contacts: total,
         excel_data: excelData,
         status: 'pending'
       }
     ])
-    .select();
+    .select()
+    .single();
 
   if (error) throw error;
-  return data[0];
+  return data;
 }
 
-// Function to update survey status
+//
+// UPDATE SURVEY STATUS
+//
 export async function updateSurveyStatus(surveyId, updates) {
   const { data, error } = await supabase
     .from('surveys')
     .update(updates)
     .eq('id', surveyId)
-    .select();
+    .select()
+    .single();
 
   if (error) throw error;
-  return data[0];
+  return data;
 }
 
-// Function to get survey by ID
+//
+// GET SURVEY
+//
 export async function getSurvey(surveyId) {
   const { data, error } = await supabase
     .from('surveys')
@@ -51,7 +64,9 @@ export async function getSurvey(surveyId) {
   return data;
 }
 
-// Function to create a response record
+//
+// CREATE RESPONSE
+//
 export async function createResponse(surveyId, contactData) {
   const { data, error } = await supabase
     .from('responses')
@@ -63,52 +78,61 @@ export async function createResponse(surveyId, contactData) {
         call_status: 'pending'
       }
     ])
-    .select();
-
-  if (error) throw error;
-  return data[0];
-}
-
-// Function to update response with answers
-export async function updateResponse(responseId, answers) {
-  const { data, error } = await supabase
-    .from('responses')
-    .update({
-      math_12th_passed: answers.math12thPassed,
-      engineering_interested: answers.engineeringInterested,
-      alternative_course: answers.alternativeCourse,
-      call_status: 'completed'
-    })
-    .eq('id', responseId)
-    .select();
-
-  if (error) throw error;
-  return data[0];
-}
-
-// Function to get all responses for a survey
-export async function getSurveyResponses(surveyId) {
-  const { data, error } = await supabase
-    .from('responses')
-    .select('*')
-    .eq('survey_id', surveyId);
+    .select()
+    .single();
 
   if (error) throw error;
   return data;
 }
 
-// Function to update survey response data
-export async function updateSurveyResponses(surveyId, responses) {
+//
+// FINAL FIXED UPDATE RESPONSE
+//
+export async function updateResponse(responseId, updates) {
+  const payload = {};
+
+  if (updates.status) {
+    payload.call_status = updates.status;
+  }
+
+  if (updates.answers) {
+    payload.math_12th_passed =
+      updates.answers.math12thPassed ?? null;
+
+    payload.engineering_interested =
+      updates.answers.engineeringInterested ?? null;
+
+    payload.alternative_course =
+      updates.answers.alternativeCourse ?? null;
+  }
+
   const { data, error } = await supabase
-    .from('surveys')
-    .update({
-      responses: responses,
-      completed_calls: responses.filter(r => r.call_status === 'completed').length,
-      failed_calls: responses.filter(r => r.call_status === 'failed').length
-    })
-    .eq('id', surveyId)
-    .select();
+    .from('responses')
+    .update(payload)
+    .eq('id', responseId)
+    .select()
+    .single();
 
   if (error) throw error;
-  return data[0];
+
+  return data;
+}
+
+//
+// GET RESPONSES
+//
+export async function getSurveyResponses(surveyId) {
+  const { data, error } = await supabase
+    .from('responses')
+    .select('*')
+    .eq('survey_id', surveyId)
+    .order('id', { ascending: true });
+
+  if (error) throw error;
+
+  // IMPORTANT normalize field
+  return data.map((row) => ({
+    ...row,
+    status: row.call_status
+  }));
 }
