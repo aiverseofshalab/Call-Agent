@@ -5,191 +5,127 @@ const authToken = process.env.TWILIO_AUTH_TOKEN;
 const fromNumber = process.env.TWILIO_PHONE_NUMBER;
 
 const BACKEND_URL =
-  process.env.BACKEND_URL ||
+  process.env.NEXT_PUBLIC_BACKEND_URL ||
   'https://call-agent-envo.onrender.com';
-
-if (!accountSid || !authToken || !fromNumber) {
-  throw new Error('Missing Twilio environment variables');
-}
 
 const client = twilio(accountSid, authToken);
 
-// In-memory call state
 const callState = new Map();
 
-// ===============================
-// START CALL
-// ===============================
 export async function initiateCall(
   surveyId,
   responseId,
   contactName,
   phoneNumber
 ) {
-  try {
-    const twimlUrl =
+  const call = await client.calls.create({
+    to: phoneNumber,
+    from: fromNumber,
+    url:
       `${BACKEND_URL}/api/ivr/greeting` +
-      `?surveyId=${surveyId}` +
-      `&responseId=${responseId}` +
-      `&name=${encodeURIComponent(contactName)}`;
+      `?name=${encodeURIComponent(contactName)}`,
+    method: 'POST',
 
-    const call = await client.calls.create({
-      to: phoneNumber,
-      from: fromNumber,
-      url: twimlUrl,
-      method: 'POST',
+    statusCallback: `${BACKEND_URL}/api/ivr/status`,
+    statusCallbackMethod: 'POST',
+    statusCallbackEvent: [
+      'initiated',
+      'ringing',
+      'answered',
+      'completed'
+    ]
+  });
 
-      statusCallback: `${BACKEND_URL}/api/ivr/status`,
-      statusCallbackMethod: 'POST',
-      statusCallbackEvent: [
-        'initiated',
-        'ringing',
-        'answered',
-        'completed'
-      ]
-    });
+  callState.set(call.sid, {
+    surveyId,
+    responseId,
+    answers: {}
+  });
 
-    callState.set(call.sid, {
-      surveyId,
-      responseId,
-      contactName,
-      phoneNumber,
-      answers: {}
-    });
-
-    console.log('Call started:', call.sid);
-
-    return call;
-  } catch (error) {
-    console.error('Call create failed:', error);
-    throw error;
-  }
+  console.log('Call started:', call.sid);
 }
 
-// ===============================
-// GREETING
-// ===============================
-export function generateGreetingTwiml(contactName) {
-  const VoiceResponse = twilio.twiml.VoiceResponse;
-  const twiml = new VoiceResponse();
-
-  twiml.say(
-    { voice: 'alice' },
-    `Hello ${contactName}. Welcome to our survey.`
-  );
+export function generateGreetingTwiml(name) {
+  const twiml = new twilio.twiml.VoiceResponse();
 
   const gather = twiml.gather({
     numDigits: 1,
-    timeout: 8,
-    method: 'POST',
-    action: `${BACKEND_URL}/api/ivr/question1`
+    timeout: 7,
+    action: `${BACKEND_URL}/api/ivr/question1`,
+    method: 'POST'
   });
 
   gather.say(
-    { voice: 'alice' },
-    'Press 1 if you passed twelfth with mathematics. Press 2 if no.'
+    `Hello ${name}. Press 1 if you passed twelfth with maths. Press 2 if no.`
   );
 
-  twiml.redirect(
-    { method: 'POST' },
-    `${BACKEND_URL}/api/ivr/greeting`
-  );
-
-  return twiml.toString();
-}
-
-// ===============================
-// QUESTION 1
-// ===============================
-export function generateQuestion1ResponseTwiml(answer) {
-  const VoiceResponse = twilio.twiml.VoiceResponse;
-  const twiml = new VoiceResponse();
-
-  if (answer === '1') {
-    const gather = twiml.gather({
-      numDigits: 1,
-      timeout: 8,
-      method: 'POST',
-      action: `${BACKEND_URL}/api/ivr/question2`
-    });
-
-    gather.say(
-      { voice: 'alice' },
-      'Are you interested in engineering? Press 1 for yes. Press 2 for no.'
-    );
-  } else {
-    twiml.say(
-      { voice: 'alice' },
-      'Thank you for your response.'
-    );
-    twiml.hangup();
-  }
-
-  return twiml.toString();
-}
-
-// ===============================
-// QUESTION 2
-// ===============================
-export function generateQuestion2ResponseTwiml(answer) {
-  const VoiceResponse = twilio.twiml.VoiceResponse;
-  const twiml = new VoiceResponse();
-
-  if (answer === '1') {
-    twiml.say(
-      { voice: 'alice' },
-      'Excellent. Thank you.'
-    );
-    twiml.hangup();
-  } else {
-    const gather = twiml.gather({
-      numDigits: 1,
-      timeout: 8,
-      method: 'POST',
-      action: `${BACKEND_URL}/api/ivr/question3`
-    });
-
-    gather.say(
-      { voice: 'alice' },
-      'Which course? Press 1 science, 2 commerce, 3 arts, 4 other.'
-    );
-  }
-
-  return twiml.toString();
-}
-
-// ===============================
-// QUESTION 3
-// ===============================
-export function generateQuestion3ResponseTwiml() {
-  const VoiceResponse = twilio.twiml.VoiceResponse;
-  const twiml = new VoiceResponse();
-
-  twiml.say(
-    { voice: 'alice' },
-    'Thank you for completing the survey.'
-  );
-
+  twiml.say('No input received.');
   twiml.hangup();
 
   return twiml.toString();
 }
 
-// ===============================
-// STATE HELPERS
-// ===============================
-export function getCallState(callSid) {
-  return callState.get(callSid);
+export function generateQuestion1ResponseTwiml(digit) {
+  const twiml = new twilio.twiml.VoiceResponse();
+
+  if (digit === '1') {
+    const gather = twiml.gather({
+      numDigits: 1,
+      timeout: 7,
+      action: `${BACKEND_URL}/api/ivr/question2`,
+      method: 'POST'
+    });
+
+    gather.say(
+      'Interested in engineering? Press 1 yes. Press 2 no.'
+    );
+  } else {
+    twiml.say('Thank you.');
+    twiml.hangup();
+  }
+
+  return twiml.toString();
 }
 
-export function updateCallState(callSid, data) {
-  const old = callState.get(callSid) || {};
-  callState.set(callSid, {
-    ...old,
-    ...data
-  });
+export function generateQuestion2ResponseTwiml(digit) {
+  const twiml = new twilio.twiml.VoiceResponse();
+
+  if (digit === '1') {
+    twiml.say('Great. Thank you.');
+    twiml.hangup();
+  } else {
+    const gather = twiml.gather({
+      numDigits: 1,
+      timeout: 7,
+      action: `${BACKEND_URL}/api/ivr/question3`,
+      method: 'POST'
+    });
+
+    gather.say(
+      'Press 1 science. 2 commerce. 3 arts. 4 other.'
+    );
+  }
+
+  return twiml.toString();
 }
 
-export function cleanupCallState(callSid) {
-  callState.delete(callSid);
+export function generateQuestion3ResponseTwiml() {
+  const twiml = new twilio.twiml.VoiceResponse();
+
+  twiml.say('Survey completed. Thank you.');
+  twiml.hangup();
+
+  return twiml.toString();
+}
+
+export function getCallState(id) {
+  return callState.get(id);
+}
+
+export function updateCallState(id, data) {
+  callState.set(id, data);
+}
+
+export function cleanupCallState(id) {
+  callState.delete(id);
 }
