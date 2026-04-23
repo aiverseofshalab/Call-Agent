@@ -1,4 +1,5 @@
 import twilio from 'twilio';
+import { updateResponse } from './supabaseClient'; // Make sure this import is correct
 
 const accountSid = process.env.TWILIO_ACCOUNT_SID;
 const authToken = process.env.TWILIO_AUTH_TOKEN;
@@ -73,55 +74,113 @@ export function generateGreetingTwiml(name) {
   return twiml.toString();
 }
 
-export function generateQuestion1ResponseTwiml(digit) {
+export async function generateQuestion1ResponseTwiml(callSid, digit) {
   const twiml = new twilio.twiml.VoiceResponse();
 
-  if (digit === '1') {
-    const gather = twiml.gather({
-      numDigits: 1,
-      timeout: 7,
-      action: `${BACKEND_URL}/api/ivr/question2`,
-      method: 'POST'
-    });
+  const state = callState.get(callSid);
+  if (!state) {
+    twiml.say('Error in survey. Thank you.');
+    twiml.hangup();
+    return twiml.toString();
+  }
 
-    gather.say(
-      'Interested in engineering? Press 1 yes. Press 2 no.'
-    );
-  } else {
+  state.answers.math12thPassed = digit === '1';
+
+  if (digit === '2') {
+    // If "No", immediately complete the survey
+    await updateResponse(state.responseId, {
+      status: 'completed',
+      answers: state.answers
+    });
     twiml.say('Thank you.');
     twiml.hangup();
+    callState.delete(callSid);
+    return twiml.toString();
   }
+
+  // If "Yes", ask about engineering interest
+  const gather = twiml.gather({
+    numDigits: 1,
+    timeout: 7,
+    action: `${BACKEND_URL}/api/ivr/question2`,
+    method: 'POST'
+  });
+
+  gather.say(
+    'Interested in engineering? Press 1 for yes. Press 2 for no.'
+  );
 
   return twiml.toString();
 }
 
-export function generateQuestion2ResponseTwiml(digit) {
+export async function generateQuestion2ResponseTwiml(callSid, digit) {
   const twiml = new twilio.twiml.VoiceResponse();
+
+  const state = callState.get(callSid);
+  if (!state) {
+    twiml.say('Error in survey. Thank you.');
+    twiml.hangup();
+    return twiml.toString();
+  }
 
   if (digit === '1') {
-    twiml.say('Great. Thank you.');
-    twiml.hangup();
-  } else {
-    const gather = twiml.gather({
-      numDigits: 1,
-      timeout: 7,
-      action: `${BACKEND_URL}/api/ivr/question3`,
-      method: 'POST'
+    // If yes, immediately complete the survey
+    state.answers.engineeringInterested = true;
+
+    await updateResponse(state.responseId, {
+      status: 'completed',
+      answers: state.answers
     });
 
-    gather.say(
-      'Press 1 science. Press 2 commerce. Press 3 arts. Press 4 other.'
-    );
+    twiml.say('Great. Thank you.');
+    twiml.hangup();
+    callState.delete(callSid);
+    return twiml.toString();
   }
+
+  // If "No", ask for alternative course
+  state.answers.engineeringInterested = false;
+  const gather = twiml.gather({
+    numDigits: 1,
+    timeout: 7,
+    action: `${BACKEND_URL}/api/ivr/question3`,
+    method: 'POST'
+  });
+
+  gather.say(
+    'Press 1 for Science. Press 2 for Commerce. Press 3 for Arts. Press 4 for Other.'
+  );
 
   return twiml.toString();
 }
 
-export function generateQuestion3ResponseTwiml() {
+export async function generateQuestion3ResponseTwiml(callSid, digit) {
   const twiml = new twilio.twiml.VoiceResponse();
+
+  const state = callState.get(callSid);
+  if (!state) {
+    twiml.say('Error in survey. Thank you.');
+    twiml.hangup();
+    return twiml.toString();
+  }
+
+  const courseMap = {
+    1: 'Science',
+    2: 'Commerce',
+    3: 'Arts',
+    4: 'Other'
+  };
+  state.answers.alternativeCourse = courseMap[digit] || 'Other';
+
+  // Update response with all collected answers
+  await updateResponse(state.responseId, {
+    status: 'completed',
+    answers: state.answers
+  });
 
   twiml.say('Survey completed. Thank you.');
   twiml.hangup();
+  callState.delete(callSid);
 
   return twiml.toString();
 }
