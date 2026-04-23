@@ -4,6 +4,10 @@ const accountSid = process.env.TWILIO_ACCOUNT_SID;
 const authToken = process.env.TWILIO_AUTH_TOKEN;
 const fromNumber = process.env.TWILIO_PHONE_NUMBER;
 
+if (!accountSid || !authToken || !fromNumber) {
+  throw new Error('Missing Twilio environment variables');
+}
+
 const BACKEND_URL =
   process.env.NEXT_PUBLIC_BACKEND_URL ||
   'https://call-agent-envo.onrender.com';
@@ -39,10 +43,14 @@ export async function initiateCall(
   callState.set(call.sid, {
     surveyId,
     responseId,
+    contactName,
+    phoneNumber,
     answers: {}
   });
 
   console.log('Call started:', call.sid);
+
+  return call;
 }
 
 export function generateGreetingTwiml(name) {
@@ -59,7 +67,7 @@ export function generateGreetingTwiml(name) {
     `Hello ${name}. Press 1 if you passed twelfth with maths. Press 2 if no.`
   );
 
-  twiml.say('No input received.');
+  twiml.say('No input received. Goodbye.');
   twiml.hangup();
 
   return twiml.toString();
@@ -102,7 +110,7 @@ export function generateQuestion2ResponseTwiml(digit) {
     });
 
     gather.say(
-      'Press 1 science. 2 commerce. 3 arts. 4 other.'
+      'Press 1 science. Press 2 commerce. Press 3 arts. Press 4 other.'
     );
   }
 
@@ -123,7 +131,11 @@ export function getCallState(id) {
 }
 
 export function updateCallState(id, data) {
-  callState.set(id, data);
+  const old = callState.get(id) || {};
+  callState.set(id, {
+    ...old,
+    ...data
+  });
 }
 
 export function cleanupCallState(id) {
